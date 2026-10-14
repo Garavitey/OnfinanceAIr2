@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>UML Generation Platform</title>
+<style>
+  :root {
+    --bg: #15171c;
+    --panel: #1c1f26;
+    --panel-alt: #22252e;
+    --border: #2d313b;
+    --text: #e4e6eb;
+    --text-dim: #9aa0ac;
+    --accent: #5b8cff;
+    --accent-dim: #345;
+    --ok: #4caf7d;
+    --warn: #e0a531;
+    --err: #e05858;
+    font-size: 15px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+
+  #app {
+    display: flex;
+    height: 100vh;
+    width: 100vw;
+  }
+
+  .pane {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  #left {
+    width: 38%;
+    min-width: 320px;
+    border-right: 1px solid var(--border);
+    background: var(--panel);
+  }
+
+  #right {
+    flex: 1;
+    background: var(--bg);
+  }
+
+  #transcript {
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .msg {
+    padding: 8px 11px;
+    border-radius: 8px;
+    max-width: 92%;
+    line-height: 1.4;
+    font-size: 13.5px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .msg.user {
+    align-self: flex-end;
+    background: var(--accent-dim);
+    border: 1px solid var(--accent);
+  }
+
+  .msg.system {
+    align-self: flex-start;
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+  }
+
+  .msg.error {
+    align-self: flex-start;
+    background: #3a1f1f;
+    border: 1px solid var(--err);
+    color: #ffb4b4;
+  }
+
+  #composer {
+    border-top: 1px solid var(--border);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: var(--panel);
+  }
+
+  #prompt-input {
+    width: 100%;
+    min-height: 70px;
+    resize: vertical;
+    background: var(--panel-alt);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px;
+    font-family: inherit;
+    font-size: 13.5px;
+  }
+
+  #prompt-input:focus { outline: 1px solid var(--accent); }
+
+  .type-select {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    max-height: 140px;
+    overflow-y: auto;
+    padding: 8px;
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  .type-option {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 8px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    font-size: 12.5px;
+    cursor: pointer;
+    user-select: none;
+    background: #262932;
+  }
+
+  .type-option:hover { border-color: var(--accent); }
+
+  .type-option input { margin: 0; cursor: pointer; }
+
+  .approx-tag {
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: #4a3a1c;
+    color: var(--warn);
+    border: 1px solid var(--warn);
+  }
+
+  #send-btn {
+    align-self: flex-end;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 9px 20px;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+
+  #send-btn:disabled {
+    background: #3a3f4a;
+    color: var(--text-dim);
+    cursor: not-allowed;
+  }
+
+  #tabbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+
+  .tab-btn {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 6px 12px;
+    border-radius: 6px 6px 0 0;
+    cursor: pointer;
+    font-size: 12.5px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .tab-btn.active {
+    color: var(--text);
+    border-color: var(--accent);
+    background: var(--bg);
+  }
+
+  .badge {
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 4px;
+    border: 1px solid currentColor;
+  }
+
+  .badge.pending { color: var(--text-dim); }
+  .badge.valid { color: var(--ok); }
+  .badge.repaired { color: var(--warn); }
+  .badge.failed { color: var(--err); }
+
+  #canvas-area {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .tab-panel {
+    display: none;
+    flex-direction: column;
+    height: 100%;
+  }
+
+  .tab-panel.active { display: flex; }
+
+  .tab-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12.5px;
+    color: var(--text-dim);
+  }
+
+  .switch-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+
+  .switch-label input { cursor: pointer; }
+
+  .tab-body {
+    flex: 1;
+    overflow: auto;
+    padding: 16px;
+  }
+
+  .render-view {
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-start;
+    min-height: 100%;
+  }
+
+  .render-view svg {
+    max-width: 100%;
+  }
+
+  .source-view {
+    display: none;
+    width: 100%;
+    height: 100%;
+    background: var(--panel-alt);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    resize: none;
+  }
+
+  .tab-panel.show-source .render-view { display: none; }
+  .tab-panel.show-source .source-view { display: block; }
+
+  .notes-line {
+    padding: 6px 14px;
+    font-size: 12px;
+    color: var(--text-dim);
+    border-top: 1px solid var(--border);
+  }
+
+  .error-box {
+    color: #ffb4b4;
+    background: #3a1f1f;
+    border: 1px solid var(--err);
+    border-radius: 6px;
+    padding: 10px;
+    font-size: 13px;
+    white-space: pre-wrap;
+  }
+
+  #empty-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-thumb { background: #3a3f4a; border-radius: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+<div id="app">
+  <section id="left" class="pane">
+    <div id="transcript"></div>
+    <div id="composer">
+      <textarea id="prompt-input" placeholder="Describe the system you want diagrammed..."></textarea>
+      <div id="diagram-type-select" class="type-select">
+        <span style="color: var(--text-dim); font-size: 12px;">loading diagram types...</span>
+      </div>
+      <button id="send-btn">Send</button>
+    </div>
+  </section>
+  <section id="right" class="pane">
+    <div id="tabbar"></div>
+    <div id="canvas-area">
+      <div id="empty-state">No diagrams yet. Send a prompt on the left.</div>
+    </div>
+  </section>
+</div>
+
+<script type="module">
+import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+
+mermaid.initialize({ startOnLoad: false, securityLevel: "strict" });
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+let diagramTypeCatalog = [];   // [{type, renderer, dsl_keyword, blurb, approximated}]
+let selectedTypes = new Set(); // DiagramType values chosen in the multi-select
+let tabs = [];                 // [{type, renderer, status, source, notes, parse_error, error, attempts, lint_score, lint_warnings, viewMode}]
+let activeTabIndex = -1;
+let renderCounter = 0;
+
+const transcriptEl = document.getElementById("transcript");
+const typeSelectEl = document.getElementById("diagram-type-select");
+const promptInput = document.getElementById("prompt-input");
+const sendBtn = document.getElementById("send-btn");
+const tabbarEl = document.getElementById("tabbar");
+const canvasAreaEl = document.getElementById("canvas-area");
+
+// ---------------------------------------------------------------------------
+// Transcript helpers
+// ---------------------------------------------------------------------------
+
+function addMessage(text, kind) {
+  const div = document.createElement("div");
+  div.className = "msg " + kind;
+  div.textContent = text;
+  transcriptEl.appendChild(div);
+  transcriptEl.scrollTop = transcriptEl.scrollHeight;
+}
+
+// ---------------------------------------------------------------------------
+// Diagram type multi-select
+// ---------------------------------------------------------------------------
+
+function prettyType(t) {
+  return t
+    .split("_")
+    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+async function loadDiagramTypes() {
+  try {
+    const res = await fetch("/v1/diagram-types");
+    if (!res.ok) throw new Error("status " + res.status);
+    diagramTypeCatalog = await res.json();
+  } catch (err) {
+    typeSelectEl.innerHTML = "";
+    const span = document.createElement("span");
+    span.style.color = "var(--err)";
+    span.style.fontSize = "12px";
+    span.textContent = "failed to load diagram types: " + err.message;
+    typeSelectEl.appendChild(span);
+    return;
+  }
+
+  typeSelectEl.innerHTML = "";
+  for (const entry of diagramTypeCatalog) {
+    const label = document.createElement("label");
+    label.className = "type-option";
+    label.title = entry.blurb;
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = entry.type;
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) selectedTypes.add(entry.type);
+      else selectedTypes.delete(entry.type);
+    });
+
+    const textSpan = document.createElement("span");
+    textSpan.textContent = prettyType(entry.type);
+
+    label.appendChild(checkbox);
+    label.appendChild(textSpan);
+
+    if (entry.approximated) {
+      const tag = document.createElement("span");
+      tag.className = "approx-tag";
+      tag.textContent = "approx";
+      label.appendChild(tag);
+    }
+
+    typeSelectEl.appendChild(label);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tabs / canvas rendering
+// ---------------------------------------------------------------------------
+
+function resetTabs(expectedTypes) {
+  tabs = expectedTypes.map((t) => ({
+    type: t,
+    renderer: null,
+    status: "pending",
+    source: "",
+    notes: "",
+    parse_error: null,
+    error: null,
+    attempts: 0,
+    lint_score: null,
+    lint_warnings: [],
+    viewMode: "rendered",
+    renderError: null,
+  }));
+  activeTabIndex = tabs.length > 0 ? 0 : -1;
+  renderTabbar();
+  renderCanvas();
+}
+
+function findTab(diagramType) {
+  return tabs.find((t) => t.type === diagramType);
+}
+
+function renderTabbar() {
+  tabbarEl.innerHTML = "";
+  tabs.forEach((tab, idx) => {
+    const btn = document.createElement("button");
+    btn.className = "tab-btn" + (idx === activeTabIndex ? " active" : "");
+    btn.addEventListener("click", () => {
+      activeTabIndex = idx;
+      renderTabbar();
+      renderCanvas();
+    });
+
+    const label = document.createElement("span");
+    label.textContent = prettyType(tab.type);
+    btn.appendChild(label);
+
+    const badge = document.createElement("span");
+    badge.className = "badge " + tab.status;
+    badge.textContent = tab.status;
+    btn.appendChild(badge);
+
+    tabbarEl.appendChild(btn);
+  });
+}
+
+function renderCanvas() {
+  canvasAreaEl.innerHTML = "";
+
+  if (tabs.length === 0) {
+    const empty = document.createElement("div");
+    empty.id = "empty-state";
+    empty.textContent = "No diagrams yet. Send a prompt on the left.";
+    canvasAreaEl.appendChild(empty);
+    return;
+  }
+
+  tabs.forEach((tab, idx) => {
+    const panel = document.createElement("div");
+    panel.className = "tab-panel" + (idx === activeTabIndex ? " active" : "");
+    if (tab.viewMode === "source") panel.classList.add("show-source");
+
+    const header = document.createElement("div");
+    header.className = "tab-header";
+
+    const headerLeft = document.createElement("span");
+    headerLeft.textContent = prettyType(tab.type) + (tab.renderer ? " · " + tab.renderer : "");
+    header.appendChild(headerLeft);
+
+    const switchLabel = document.createElement("label");
+    switchLabel.className = "switch-label";
+    const switchInput = document.createElement("input");
+    switchInput.type = "checkbox";
+    switchInput.checked = tab.viewMode === "source";
+    switchInput.addEventListener("change", () => {
+      tab.viewMode = switchInput.checked ? "source" : "rendered";
+      renderCanvas();
+    });
+    const switchText = document.createElement("span");
+    switchText.textContent = "Source";
+    switchLabel.appendChild(switchInput);
+    switchLabel.appendChild(switchText);
+    header.appendChild(switchLabel);
+
+    panel.appendChild(header);
+
+    const body = document.createElement("div");
+    body.className = "tab-body";
+
+    const renderView = document.createElement("div");
+    renderView.className = "render-view";
+    renderView.id = "render-view-" + idx;
+
+    if (tab.status === "pending") {
+      renderView.innerHTML = '<span style="color: var(--text-dim); font-size: 13px;">waiting for this diagram...</span>';
+    } else if (tab.status === "failed") {
+      const box = document.createElement("div");
+      box.className = "error-box";
+      box.textContent = tab.error || tab.parse_error || "generation failed";
+      renderView.appendChild(box);
+    } else if (tab.renderError) {
+      const box = document.createElement("div");
+      box.className = "error-box";
+      box.textContent = "render error: " + tab.renderError;
+      renderView.appendChild(box);
+    } else if (tab.svg) {
+      renderView.innerHTML = tab.svg;
+    } else {
+      renderView.innerHTML = '<span style="color: var(--text-dim); font-size: 13px;">rendering...</span>';
+    }
+
+    body.appendChild(renderView);
+
+    const sourceView = document.createElement("textarea");
+    sourceView.className = "source-view";
+    sourceView.readOnly = true;
+    sourceView.value = tab.source || "";
+    body.appendChild(sourceView);
+
+    panel.appendChild(body);
+
+    if (tab.notes || (tab.lint_warnings && tab.lint_warnings.length > 0)) {
+      const notes = document.createElement("div");
+      notes.className = "notes-line";
+      let text = "";
+      if (tab.notes) text += tab.notes;
+      if (tab.lint_score !== null) text += (text ? " · " : "") + "lint " + tab.lint_score;
+      if (tab.lint_warnings && tab.lint_warnings.length > 0) {
+        text += (text ? " · " : "") + tab.lint_warnings.join("; ");
+      }
+      notes.textContent = text;
+      panel.appendChild(notes);
+    }
+
+    canvasAreaEl.appendChild(panel);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Per-diagram rendering (mermaid in-browser, plantuml via server route)
+// ---------------------------------------------------------------------------
+
+async function renderTab(tab) {
+  if (tab.renderer === "mermaid") {
+    try {
+      renderCounter += 1;
+      const id = "mermaid-render-" + renderCounter;
+      const { svg } = await mermaid.render(id, tab.source);
+      tab.svg = svg;
+      tab.renderError = null;
+    } catch (err) {
+      tab.svg = null;
+      tab.renderError = err && err.message ? err.message : String(err);
+    }
+  } else if (tab.renderer === "plantuml") {
+    try {
+      const res = await fetch("/v1/render/plantuml", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: tab.source }),
+      });
+      if (res.ok) {
+        tab.svg = await res.text();
+        tab.renderError = null;
+      } else {
+        const body = await res.json().catch(() => ({}));
+        tab.svg = null;
+        tab.renderError = body.parse_error || "plantuml render failed (" + res.status + ")";
+      }
+    } catch (err) {
+      tab.svg = null;
+      tab.renderError = err && err.message ? err.message : String(err);
+    }
+  } else {
+    tab.svg = null;
+    tab.renderError = "unknown renderer: " + tab.renderer;
+  }
+  renderCanvas();
+}
+
+// ---------------------------------------------------------------------------
+// SSE event handling
+// ---------------------------------------------------------------------------
+
+function handleEvent(eventName, payload) {
+  switch (eventName) {
+    case "job_started": {
+      resetTabs(payload.expected);
+      break;
+    }
+    case "spec_ready": {
+      const spec = payload.spec;
+      const parts = [];
+      if (spec.entities && spec.entities.length) parts.push("entities: " + spec.entities.join(", "));
+      if (spec.actors && spec.actors.length) parts.push("actors: " + spec.actors.join(", "));
+      if (spec.services && spec.services.length) parts.push("services: " + spec.services.join(", "));
+      if (spec.suggested_diagram_types && spec.suggested_diagram_types.length) {
+        parts.push("suggested: " + spec.suggested_diagram_types.join(", "));
+      }
+      addMessage("Spec extracted — " + parts.join(" | "), "system");
+      break;
+    }
+    case "diagram_complete": {
+      const result = payload.result;
+      let tab = findTab(result.diagram_type);
+      if (!tab) {
+        tab = {
+          type: result.diagram_type,
+          viewMode: "rendered",
+          lint_warnings: [],
+        };
+        tabs.push(tab);
+      }
+      tab.renderer = result.renderer;
+      tab.status = result.status;
+      tab.source = result.source;
+      tab.notes = result.notes;
+      tab.parse_error = result.parse_error;
+      tab.attempts = result.repair_attempts;
+      tab.lint_score = result.lint_score;
+      tab.lint_warnings = result.lint_warnings || [];
+      tab.error = null;
+      renderTabbar();
+      renderCanvas();
+      renderTab(tab);
+      break;
+    }
+    case "diagram_failed": {
+      let tab = findTab(payload.diagram_type);
+      if (!tab) {
+        tab = {
+          type: payload.diagram_type,
+          viewMode: "rendered",
+          lint_warnings: [],
+        };
+        tabs.push(tab);
+      }
+      tab.status = "failed";
+      tab.error = payload.error;
+      tab.attempts = payload.attempts;
+      tab.parse_error = payload.error;
+      renderTabbar();
+      renderCanvas();
+      break;
+    }
+    case "job_complete": {
+      addMessage(
+        "Job complete — " + payload.succeeded + " succeeded, " + payload.failed +
+          " failed, " + payload.latency_ms + "ms",
+        "system"
+      );
+      sendBtn.disabled = false;
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+function parseFrame(frame) {
+  let eventName = null;
+  let data = null;
+  for (const line of frame.split("\n")) {
+    if (line.startsWith("event:")) {
+      eventName = line.slice(6).trim();
+    } else if (line.startsWith("data:")) {
+      data = line.slice(5).trim();
+    }
+  }
+  if (!eventName || data === null) return;
+  let payload;
+  try {
+    payload = JSON.parse(data);
+  } catch (err) {
+    console.error("failed to parse SSE payload", err, data);
+    return;
+  }
+  handleEvent(eventName, payload);
+}
+
+// ---------------------------------------------------------------------------
+// Send flow
+// ---------------------------------------------------------------------------
+
+async function sendPrompt() {
+  const prompt = promptInput.value.trim();
+  if (!prompt) return;
+
+  sendBtn.disabled = true;
+  addMessage(prompt, "user");
+
+  const body = {
+    session_id: null,
+    parent_version: null,
+    prompt: prompt,
+    diagram_types: selectedTypes.size > 0 ? Array.from(selectedTypes) : null,
+    options: { effort: "high", stream: true },
+  };
+
+  promptInput.value = "";
+
+  let response;
+  try {
+    response = await fetch("/v1/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    addMessage("Request failed: " + err.message, "error");
+    sendBtn.disabled = false;
+    return;
+  }
+
+  if (!response.ok || !response.body) {
+    addMessage("Request failed with status " + response.status, "error");
+    sendBtn.disabled = false;
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      let idx;
+      while ((idx = buffer.indexOf("\n\n")) !== -1) {
+        const frame = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        if (frame.trim().length > 0) parseFrame(frame);
+      }
+    }
+    // Flush any trailing frame without a terminating blank line.
+    if (buffer.trim().length > 0) parseFrame(buffer);
+  } catch (err) {
+    addMessage("Stream error: " + err.message, "error");
+  } finally {
+    // job_complete normally re-enables Send; this is a safety net in case
+    // the stream ended early (error, disconnect) without that frame.
+    sendBtn.disabled = false;
+  }
+}
+
+sendBtn.addEventListener("click", sendPrompt);
+promptInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault();
+    sendPrompt();
+  }
+});
+
+loadDiagramTypes();
+</script>
+</body>
+</html>
