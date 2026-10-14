@@ -1,0 +1,42 @@
+# NOTE: local development does NOT need any of this. SQLite (DATABASE_URL
+# default sqlite+aiosqlite:///./uml.db), an in-process cache (used whenever
+# REDIS_URL is unset), and vendor/plantuml.jar (shelled out to directly) cover
+# storage, caching, and PlantUML rendering respectively for local dev and for
+# scripts/health.sh. This file documents the deployed-environment path only —
+# Postgres, Redis, and Kroki as real services reachable over the network — and
+# is not exercised on a developer machine.
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: uml
+      POSTGRES_PASSWORD: uml
+      POSTGRES_DB: uml
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U uml -d uml"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  kroki:
+    image: yuzutech/kroki
+    ports:
+      - "8000:8000"
+
+volumes:
+  postgres_data:
