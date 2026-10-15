@@ -112,8 +112,8 @@ async def render_plantuml(
 
     Shells out to the PlantUML jar: stdin is the source, stdout is the SVG.
     Exit 0 means the render succeeded; any other exit means stderr holds a
-    parse error (see AGENT_RULES.md local overrides: three lines, `ERROR`,
-    line number, message — the last two are joined into `parse_error`).
+    parse error (see AGENTS.md: three lines, `ERROR`, line number, message —
+    the last two are joined into `parse_error`).
     """
     proc = await asyncio.create_subprocess_exec(
         "java",

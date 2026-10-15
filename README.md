@@ -1,177 +1,196 @@
-# UML Diagram Generation Platform — Remaining Work
+# UML Diagram Generation Platform
 
-Chat platform that turns a prose system description into a set of UML diagrams,
-streams them to the browser as they finish, keeps every prompt and diagram
-version, and captures user feedback as RL training data.
+A chat platform that turns a prose system description into a set of rendered UML
+diagrams. One prompt in, a stream of validated diagrams out — with version
+history and user feedback captured as RL training data.
 
-Design: [`HLD.md`](HLD.md) · Build order: [`PLAN.md`](PLAN.md) ·
-Agent constraints and local environment overrides: [`AGENT_RULES.md`](AGENT_RULES.md)
+Design rationale: [`HLD.md`](HLD.md) · Agent and contributor notes:
+[`AGENTS.md`](AGENTS.md)
 
-This README tracks **what is left**. It is the handoff doc, not the design doc.
+This README is written for someone reviewing the repository. It states what
+works, what does not, and what is left — in that order.
 
 ---
 
-## Status at a glance
+## The problem
+
+Given a prompt and an optional list of diagram types:
+
+```json
+{
+  "prompt": "I am working on a compliance monitoring solution which will pull in the latest circulars from SEBI and parse them. Once it is parsed into a table to clauses, you will need to extract: (1) the new compliance requirements proposed by the regulator, (2) gap analysis with my existing compliance setup, (3) the impact of these new requirements on my organization at an IT and operational level.",
+  "diagram_types": ["sequence", "component"]
+}
+```
+
+...produce correct, renderable UML. Three user flows are in scope: a new user
+generating a set, an existing user revising a prompt and getting an updated set,
+and an existing user leaving feedback that reaches a LangChain ART trainer.
+
+---
+
+## Quickstart
+
+Full setup — venv, Mermaid sidecar, PlantUML jar — is in
+[`AGENTS.md`](AGENTS.md#setup). Nothing runs on a fresh clone until you do it,
+because every one of those artefacts is gitignored. Short version:
+
+```bash
+/opt/homebrew/bin/python3.13 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+cd validator && npm install && cd ..
+mkdir -p vendor && curl -sL -o vendor/plantuml.jar \
+  https://github.com/plantuml/plantuml/releases/download/v1.2026.0/plantuml-1.2026.0.jar
+cp .env.example .env
+.venv/bin/python scripts/init_db.py
+
+.venv/bin/python -m app.generate      # smoke test: venv + both validators + jar
+.venv/bin/uvicorn app.main:app        # then open the printed URL
+```
+
+Requires Java and Graphviz on PATH for the PlantUML jar.
+
+**Everything runs in mock mode by default** (`MOCK_LLM=1`). There is no API key
+in this repo, so `app/mock_llm.py` returns deterministic canned responses shaped
+to the same JSON schema the live model uses. See
+[the caveat below](#the-caveat-that-matters-most).
+
+---
+
+## Status
 
 | Phase | Steps | State |
 |---|---|---|
-| Phase 0 — POC | C1–C4 | **done** — `poc/generate.py`, `poc/validate.py`, `poc/two_phase.py`, `validator/validate.mjs` |
-| Phase 1 — PLAN | S1–S6 | **done** — contracts frozen, DB models, type matrix, stubbed API, UI shell |
-| Phase 2 — MVP | M1, M3b, M4, M8 | **done** — `app/llm.py` (incl. mock mode), `app/templates/plantuml.py`, `app/validate.py`, `app/auth.py` |
-| Phase 2 — MVP | M2, M3a, M5, M6 | **done** — the generation pipeline: `app/spec.py`, `app/templates/mermaid.py`, `app/generate.py`, `app/orchestrator.py` |
-| Phase 2 — MVP | M7, M9–M13 | **remaining — 6 steps, 9 files** |
+| Phase 0 — POC | C1–C4 | **done** — `poc/`, `validator/validate.mjs` |
+| Phase 1 — scaffold | S1–S6 | **done** — contracts frozen, DB models, type matrix, API, UI shell |
+| Phase 2 — MVP | M1–M6, M8 | **done** — the generation pipeline, validators, auth stub |
+| Phase 2 — MVP | M7, M9–M13 | **remaining — 6 steps** |
 
-What runs today: `uvicorn app.main:app` serves the single-file UI, and
-`POST /v1/generate` runs the **real** pipeline — spec extraction, concurrent
-per-type generation, parser validation, repair loop — streaming each diagram
-over SSE as it finishes. Mermaid renders in the browser; PlantUML renders
-server-side via `POST /v1/render/plantuml` (local jar). Measured in mock mode on
-this machine, a 7-diagram job streams its first diagram at ~1.7s and completes
-at ~3.3s.
+### What works
 
-Still missing: nothing is persisted (so there are no sessions, no version
-history and no Flow 2), feedback is accepted and discarded, and there is no
-training export. Flow 1 is demoable; Flows 2 and 3 are not.
+**Flow 1 is complete and demonstrable.** `POST /v1/generate` runs the real
+pipeline — spec extraction, concurrent per-type generation, parser validation,
+repair loop — streaming each diagram over SSE as it finishes. Measured in mock
+mode on an M-series Mac, the payload above across 7 diagram types:
+
+```
+  0.04s  job_started        expected: 7 types
+  0.62s  spec_ready         entities=6 actors=4
+  1.98s  diagram_complete   use_case        valid  repairs=0
+  ...
+  4.75s  diagram_complete   deployment      valid  repairs=0
+  4.75s  job_complete       7 succeeded, 0 failed
+```
+
+First diagram at 1.98s against a 4.75s job — the point of streaming per
+completion rather than gathering.
+
+- **All 14 UML 2.x diagram types** generate and pass their real parser. Seven
+  are Mermaid-backed, seven PlantUML-backed; two (`use_case`, `package`) are
+  flagged `approximated` where Mermaid has no native UML form. The capability
+  matrix in `app/diagram_types.py` is the single source of truth and is
+  assertion-checked against the `DiagramType` enum at import.
+- **Syntax is verified, not trusted.** Every diagram passes a real parser before
+  the browser sees it — the Node sidecar for Mermaid, the jar for PlantUML. On a
+  parse failure the error text goes back to the model as a targeted repair
+  prompt, up to `MAX_ATTEMPTS = 3`. A diagram that exhausts its budget ships as
+  `failed` but **keeps its last source**, so the user can hand-fix it — and that
+  fix is the strongest training signal in the system.
+- **Both renderers reach the UI.** Mermaid renders client-side; PlantUML
+  round-trips through `POST /v1/render/plantuml` to SVG via the local jar, so no
+  diagram source leaves the machine.
+
+### What does not work
+
+- **Flow 2 (revision) is not wired.** The seams exist and are typed —
+  `extract_spec(prior=)`, `generate_diagram(prior_source=)`,
+  `run_generation(prior_sources=)` — but nothing is persisted, so a request
+  carrying a `session_id` returns 200 and silently re-draws from scratch.
+  `GET /v1/sessions` is a stub returning `[]`.
+- **Flow 3 (feedback → ART) is not wired.** `POST /v1/feedback` returns 202 and
+  discards the payload. The schema is there — `Feedback` table, five signal
+  types, `RewardBreakdown` with weights fixed at 0.30 parse / 0.20 lint / 0.30
+  human / 0.15 edit / 0.05 implicit, `TrajectoryRecord` — but `app/training/` is
+  an empty package. No insert, no reward computation, no JSONL export.
+
+### The caveat that matters most
+
+**The live model path has never executed.** There is no API key here, so every
+diagram this repo has ever produced came from `app/mock_llm.py` — hand-written
+DSL in the SEBI compliance domain that genuinely passes the validators, but is
+not model output. What is verified is the machinery: streaming, concurrency, the
+parse gate, the repair loop, both renderers. What is entirely unverified is
+whether the model writes good UML for an arbitrary prompt.
+
+Two things to check the moment a key is wired: `app/llm.py` pins
+`MODEL = "claude-opus-5"`, and the call uses the `output_config`/`effort` shape.
+Neither has been exercised against the real endpoint. Prompt caching is wired —
+a stable system prefix under `cache_control`, spec serialised with sorted keys —
+but has never been measured.
 
 ---
 
-## 1. Environment setup (do this first — nothing below runs without it)
+## Remaining work
 
-These artefacts are gitignored, so they are absent from a fresh clone and from
-every new worktree. The whole bootstrap, verified end to end:
+### Unblocked
 
-```bash
-/opt/homebrew/bin/python3.13 -m venv .venv          # system python is 3.9: StrEnum fails
-.venv/bin/pip install -r requirements.txt
-cd validator && npm install && cd ..                # Mermaid parse gate (jsdom + mermaid)
-mkdir -p vendor && curl -sL -o vendor/plantuml.jar \
-  https://github.com/plantuml/plantuml/releases/download/v1.2026.0/plantuml-1.2026.0.jar
-cp .env.example .env                                # SQLite + MOCK_LLM=1
-.venv/bin/python scripts/init_db.py                 # creates the 7 tables in uml.db
-```
+| Step | Files | What's missing |
+|---|---|---|
+| **M7** | `app/sessions.py`, session/diagram read handlers in `app/routes.py` | Append-only persistence, version linkage, `prior_source()`, and `carry_forward()` so untouched diagram types survive a revision. Every read scoped by `user_id`; another user's session returns **404**, not 403. Unblocks Flow 2. |
+| **M9** | `app/feedback.py`, real `POST /v1/feedback` | Insert the Feedback row, honour `training_consent` (store but mark `rejected`), best-effort Redis buffer, return 202. Unblocks Flow 3. |
+| **M12** | `app/cache.py`, lookup in `app/orchestrator.py` | Keyed on normalised prompt + type + model + template version. Every Redis error is a cache miss, never an exception. Never cache a `FAILED` result. |
 
-- **Every** command in every step uses `.venv/bin/python`, never bare `python`.
-- The PlantUML jar needs Java and Graphviz on PATH (`java -version`, `dot -V`).
-- `.env` defaults are the intended local mode: no Docker, no API key, fully
-  runnable.
+### Blocked
 
-Smoke test the bootstrap: `.venv/bin/python -m app.generate` prints a valid
-`sequence` (Mermaid) and `deployment` (PlantUML) diagram, which exercises the
-venv, both validators and the jar in one command.
+| Step | Files | Needs |
+|---|---|---|
+| **M10** | `app/training/reward.py`, `export.py`, `trainer_stub.py` | M9. Reconstruct trajectories from stored rows only, mark rows `exported` in the same transaction, skip non-consenting users. Stops at the ART trainer's input contract — no GPU, no RL step. |
+| **M11** | `static/index.html` | M9. Extend, don't rewrite: session rail, `X-User-Id` from localStorage, version switcher with before/after source, feedback controls, and **editable source** (live re-render on change, EDIT signal on blur). |
+| **M13** | `scripts/demo.py` | M7, M9. All three flows end to end with wall-clock deltas and a summary table. |
 
-`docker-compose.yml` (Postgres + Redis + Kroki) is the documented production
-path and is intentionally **not** the local path — see the local overrides in
-`AGENT_RULES.md`. Redis is optional everywhere; `KROKI_URL` stays unset so no
-diagram source leaves the machine.
+Suggested order: `M7 · M9 · M12` in parallel, then `M10 · M11`, then `M13`.
 
----
+### Cross-cutting
 
-## 2. Remaining steps
-
-Each step's copy-paste prompt is in `PLAN.md` under the matching heading. Prepend:
-
-```
-Read AGENT_RULES.md first. Then do only this step:
-```
-
-### Ready to start now (no unmet dependencies — 3 in parallel)
-
-| Step | Files | Model | What's missing |
-|---|---|---|---|
-| **M7** | `app/sessions.py` + session/diagram read handlers in `app/routes.py` | sonnet | Append-only persistence, version linkage, `prior_source()`, and `carry_forward()` so untouched diagram types survive a revision. Every read scoped by `user_id`; another user's session returns **404**, not 403. |
-| **M9** | `app/feedback.py` + real `POST /v1/feedback` | sonnet | Insert the Feedback row, honour `training_consent` (store but mark `rejected`), best-effort Redis buffer, return 202. |
-| **M12** | `app/cache.py` + lookup in `app/orchestrator.py` | sonnet | Keyed on normalised prompt + type + model + template version. Every Redis error is a cache miss, never an exception. Never cache a FAILED result. |
-
-### Blocked until the above land
-
-| Step | Files | Model | Needs |
-|---|---|---|---|
-| **M10** | `app/training/reward.py`, `export.py`, `trainer_stub.py` | sonnet | M9. Reward weights are already in `contracts.RewardBreakdown.total`. Export must reconstruct trajectories from stored rows only, mark rows `exported` in the same transaction, and skip non-consenting users. Stops at the ART trainer's input contract — no GPU, no RL step. |
-| **M11** | `static/index.html` | sonnet | M9 (M6 has landed). Extend, don't rewrite: session rail, `X-User-Id` from localStorage, version switcher with before/after source, feedback controls, **editable source** (live re-render on change, EDIT signal on blur — the strongest training signal in the system), server-side PlantUML rendering in place of the placeholder note, repair/lint badges. |
-| **M13** | `scripts/demo.py` | sonnet | M7, M9. The script you run in front of a reviewer: all three flows end to end with wall-clock deltas and a summary table. |
-
-### Suggested execution waves
-
-```
-Wave A   M7 · M9 · M12     (3 parallel)
-Wave B   M10 · M11         (2 parallel)
-Wave C   M13
-```
-
-### What landed in the generation pipeline (M2, M3a, M5, M6)
-
-Context the remaining steps need, since they build directly on it:
-
-- `extract_spec(prompt, prior=None)` — one `effort="high"` call. Passing `prior`
-  turns it into a patch: the prior spec goes in the **user** message, never in
-  `system`, so the cached prefix survives a revision. `suggested_diagram_types`
-  is guaranteed non-empty (falls back to the prior spec's set, then `DEFAULT_TYPES`).
-- `generate_diagram(type, spec, prior_source=None)` → `(DiagramResult, list[Usage])`.
-  `MAX_ATTEMPTS = 3` (one generate + two repairs). `SHARED_RULES` is byte-identical
-  across all 14 types and comes first in `system`; the spec is serialised with
-  **sorted keys**. Editing either invalidates the prompt cache for every in-flight
-  session.
-- `run_generation(req, user_id, prior_sources=None)` yields SSE frames. It takes
-  `prior_sources: dict[DiagramType, str]` — that is the seam M7 fills from stored
-  versions to make Flow 2 revise instead of re-draw.
-- A diagram whose repair budget is exhausted ships as `diagram_complete` with
-  `status="failed"`, carrying its last source and `parse_error`, because the UI
-  needs that source for the user to hand-fix (and the fix is training data).
-  `diagram_failed` is reserved for a diagram with no source at all — a refusal or
-  a crash. Both count toward `job_complete.failed`.
-- When the request omits `diagram_types`, `job_started.expected` is provisional
-  (`DEFAULT_TYPES`) and the spec's suggestions replace it. The announced types are
-  unioned back in, never dropped — the client has already drawn a pending tab per
-  announced type.
-
----
-
-## 3. Cross-cutting work the steps assume but don't own
-
-- [ ] **Wire persistence into the orchestrator.** `app/orchestrator.py` has
-      landed with no persistence at all: M7 must call `save_spec` after
-      `spec_ready` and `save_diagram_version` per completed diagram, and feed
-      `run_generation`'s `prior_sources` argument from the prior version so a
-      revision revises instead of re-drawing. Nothing else calls those seams today.
-- [x] **Store the lint result.** `generate_diagram` now runs `lint()` on every
-      diagram that parses and populates `DiagramResult.lint_score` /
-      `lint_warnings` (a FAILED diagram reports `0.0`, not the optimistic
-      default). M7 still has to persist those two fields on `DiagramVersion` —
-      M10's reward reads them from storage, not from the SSE frame.
-- [ ] **Lint under-reports on nested PlantUML.** `lint()`'s graph extraction does
+- [ ] **Wire persistence into the orchestrator.** `app/orchestrator.py` has no
+      persistence at all. M7 must call `save_spec` after `spec_ready` and
+      `save_diagram_version` per completed diagram, and feed `prior_sources`
+      from the prior version so a revision revises instead of re-draws.
+- [ ] **Persist the lint result.** `generate_diagram` populates
+      `DiagramResult.lint_score` / `lint_warnings`; M7 has to store them on
+      `DiagramVersion`, because M10's reward reads them from storage, not from
+      the SSE frame.
+- [ ] **Lint under-reports on nested PlantUML.** `lint()`'s graph extractor does
       not understand `node "X" { ... }` nesting, so container nodes in a
-      deployment diagram are reported as orphans (score 0.75 on a correct
-      diagram). It is a cosmetic badge today, but M10 turns it into 20% of the
-      reward — fix the extractor or exclude containers before then.
-- [ ] **`app/templates/__init__.py` and `app/training/__init__.py` are empty.**
-      Fine as-is; no re-exports are expected by any step.
-- [ ] **Mock mode must keep passing the validator.** `app/mock_llm.py` is a
-      first-class code path, not a test fixture — every new step has to work with
-      `MOCK_LLM=1`, since that is the only mode runnable here.
+      deployment diagram are reported as orphans — a correct diagram scores
+      0.75. Cosmetic today, but lint becomes 20% of the training reward, so this
+      poisons the signal the moment M10 lands.
+- [ ] **There is no test suite.** Everything claimed above was verified by hand.
+      The four checks worth automating first: all 14 types parse, the repair
+      loop promotes `failed`→`repaired`, the parse gate rejects malformed
+      source, and SSE frame order holds.
 
 ---
 
-## 4. Exit gate for Phase 2
+## Exit gate for Phase 2
 
-All three flows demonstrable from the UI:
-
-1. **Flow 1** — a fresh prompt streams diagrams in, first one arriving well
-   before the last. **Met** on the API (`~1.7s` to first of 7 diagrams, `~3.3s`
-   to last, mock mode); the UI consumes that stream unchanged.
-2. **Flow 2** — a revised prompt in the same session returns an updated set with
-   history preserved and untouched types carried forward.
-3. **Flow 3** — feedback is captured and shows up in the JSONL training export.
+1. **Flow 1** — a fresh prompt streams diagrams in, first well before last.
+   **Met.**
+2. **Flow 2** — a revised prompt returns an updated set with history preserved
+   and untouched types carried forward. **Not met.**
+3. **Flow 3** — feedback is captured and appears in the JSONL training export.
+   **Not met.**
 
 ---
 
-## 5. Deliberately out of scope
+## Deliberately out of scope
 
-Designed in `HLD.md`, no build step anywhere: real OIDC/JWT auth (M8 is a stub
-with the right seam), retry/backoff, rate limiting, metrics and alerting
+Designed in [`HLD.md`](HLD.md), with no build step: real OIDC/JWT auth (M8 is a
+stub with the right seam), retry/backoff, rate limiting, metrics and alerting
 dashboards, load testing, actual ART GPU training, and the HLD §10 failure-mode
 drills.
 
-The two cheapest to add later and most likely to be asked about: **real auth**
-(swap the `current_user` dependency, no handler changes) and **metrics** (the
-`Usage` dataclass in `app/llm.py` already carries every token and latency number
-the dashboards need — only the emit call is missing).
+The two cheapest to add later, and the two most likely to be asked about: **real
+auth** (swap the `current_user` dependency, no handler changes) and **metrics**
+(the `Usage` dataclass in `app/llm.py` already carries every token and latency
+number the dashboards need — only the emit call is missing).

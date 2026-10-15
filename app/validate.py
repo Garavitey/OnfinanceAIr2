@@ -2,9 +2,9 @@
 
 `validate()` is the deterministic parse gate. MERMAID always shells out to
 the Node sidecar at validator/validate.mjs (same approach as poc/validate.py,
-promoted to a service). PLANTUML defaults to the local jar (see
-AGENT_RULES.md local overrides); only an explicitly-set KROKI_URL redirects
-it to Kroki instead. Every failure mode short of a genuine parse error --
+promoted to a service). PLANTUML defaults to the local jar (see AGENTS.md);
+only an explicitly-set KROKI_URL redirects it to Kroki instead. Every
+failure mode short of a genuine parse error --
 timeout, missing jar, connection refused -- degrades to
 `(False, "renderer unavailable: ...")` rather than raising, so a broken
 PlantUML backend fails only the 7 PlantUML diagram types instead of crashing
