@@ -1,96 +1,48 @@
 """API routes for the UML generation platform.
 
-Every handler here is a stub returning fixture data except
-POST /v1/render/plantuml, which is real: Mermaid renders in the browser via
-mermaid.js, but PlantUML has no browser-side renderer, so the UI depends on
-this route to turn PlantUML source into SVG. Route shapes and SSE event
-shapes are final as of this step — later steps (M6, M7, M9, ...) replace the
-stub bodies in place without changing what callers see on the wire.
+POST /v1/generate and POST /v1/render/plantuml are real; the session, version
+and feedback handlers are still stubs (M7 and M9 replace their bodies in
+place). Mermaid renders in the browser via mermaid.js, but PlantUML has no
+browser-side renderer, so the UI depends on the render route to turn PlantUML
+source into SVG. Route shapes and SSE event shapes are final: stub bodies get
+replaced without changing what callers see on the wire.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
-import time
-from collections.abc import AsyncIterator
 from pathlib import Path
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from app.auth import current_user
-from app.contracts import (
-    DiagramComplete,
-    DiagramResult,
-    DiagramStatus,
-    DiagramType,
-    FeedbackRequest,
-    GenerateRequest,
-    JobComplete,
-    JobStarted,
-    Renderer,
-    SpecReady,
-)
-from app.diagram_types import CAPABILITY, DEFAULT_TYPES, renderer_for
-from app.fixtures import FIXTURE_DIAGRAMS, FIXTURE_SPEC
+from app.contracts import DiagramType, FeedbackRequest, GenerateRequest
+from app.diagram_types import CAPABILITY
 from app.models import User
+from app.orchestrator import run_generation
 
 router = APIRouter()
 
 _DEFAULT_PLANTUML_JAR = str(Path(__file__).resolve().parent.parent / "vendor" / "plantuml.jar")
 PLANTUML_JAR = os.environ.get("PLANTUML_JAR", _DEFAULT_PLANTUML_JAR)
 
-# 2-line valid placeholder per renderer, used for any requested diagram type
-# that doesn't have a hand-written fixture source.
-_PLACEHOLDER_SOURCE: dict[Renderer, str] = {
-    Renderer.MERMAID: "flowchart TD\n    A --> B",
-    Renderer.PLANTUML: "@startuml\nA -> B\n@enduml",
-}
-
 
 @router.post("/v1/generate")
 async def generate(
     request: GenerateRequest, user: User = Depends(current_user)
 ) -> StreamingResponse:
-    """Stream a generation job as SSE frames. STUB: replaced by M6."""
+    """Stream a real generation job as SSE frames.
 
-    async def event_stream() -> AsyncIterator[str]:
-        start = time.monotonic()
-        job_id = uuid4()
-        version = 1
-        types = request.diagram_types or DEFAULT_TYPES
-
-        yield JobStarted(job_id=job_id, version=version, expected=types).to_sse()
-        await asyncio.sleep(0.4)
-
-        yield SpecReady(spec=FIXTURE_SPEC).to_sse()
-        await asyncio.sleep(0.4)
-
-        succeeded = 0
-        for diagram_type in types:
-            source = FIXTURE_DIAGRAMS.get(
-                diagram_type, _PLACEHOLDER_SOURCE[renderer_for(diagram_type)]
-            )
-            result = DiagramResult(
-                diagram_type=diagram_type,
-                renderer=renderer_for(diagram_type),
-                source=source,
-                status=DiagramStatus.VALID,
-            )
-            yield DiagramComplete(result=result).to_sse()
-            succeeded += 1
-            await asyncio.sleep(0.4)
-
-        latency_ms = int((time.monotonic() - start) * 1000)
-        yield JobComplete(
-            version=version, succeeded=succeeded, failed=0, latency_ms=latency_ms
-        ).to_sse()
-
+    The handler is a thin shell on purpose: `run_generation` is the async
+    generator that does the work, and it is handed `user.id` from the auth
+    dependency — never a user id from the request body, which would let any
+    caller generate (and later, persist) as somebody else.
+    """
     return StreamingResponse(
-        event_stream(),
+        run_generation(request, user.id),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

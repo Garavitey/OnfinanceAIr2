@@ -39,10 +39,19 @@ apply them wherever your step prompt conflicts.
 
 ### 1. Python
 
-Use the project venv at `.venv/` (Python 3.13). It already exists.
+Use the project venv at `.venv/` (Python 3.13).
 **Every** command you run uses `.venv/bin/python` or `.venv/bin/pip` — never bare
 `python`/`python3`, which is 3.9 and will fail on `StrEnum` and modern typing.
 When your step's VERIFY line says `python ...`, read it as `.venv/bin/python ...`.
+
+`.venv/` is gitignored, so a fresh clone or a new worktree does not have it. If
+it is missing, create it before anything else — do not fall back to system
+Python:
+
+```
+/opt/homebrew/bin/python3.13 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
 
 ### 2. No Docker — Postgres becomes SQLite
 
@@ -62,7 +71,14 @@ never an exception that reaches a handler.
 
 ### 4. Kroki becomes a local PlantUML jar
 
-Java 26 and Graphviz are installed, and `vendor/plantuml.jar` (v1.2026.0) is present.
+Java 26 and Graphviz are installed. `vendor/plantuml.jar` (v1.2026.0) is gitignored,
+so fetch it if the file is absent:
+
+```
+mkdir -p vendor && curl -sL -o vendor/plantuml.jar \
+  https://github.com/plantuml/plantuml/releases/download/v1.2026.0/plantuml-1.2026.0.jar
+```
+
 Validate and render PlantUML by shelling out — this exact invocation, already
 verified on this machine:
 
