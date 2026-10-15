@@ -17,10 +17,11 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
+from app.auth import current_user
 from app.contracts import (
     DiagramComplete,
     DiagramResult,
@@ -35,6 +36,7 @@ from app.contracts import (
 )
 from app.diagram_types import CAPABILITY, DEFAULT_TYPES, renderer_for
 from app.fixtures import FIXTURE_DIAGRAMS, FIXTURE_SPEC
+from app.models import User
 
 router = APIRouter()
 
@@ -50,7 +52,9 @@ _PLACEHOLDER_SOURCE: dict[Renderer, str] = {
 
 
 @router.post("/v1/generate")
-async def generate(request: GenerateRequest) -> StreamingResponse:
+async def generate(
+    request: GenerateRequest, user: User = Depends(current_user)
+) -> StreamingResponse:
     """Stream a generation job as SSE frames. STUB: replaced by M6."""
 
     async def event_stream() -> AsyncIterator[str]:
@@ -93,19 +97,21 @@ async def generate(request: GenerateRequest) -> StreamingResponse:
 
 
 @router.get("/v1/sessions")
-async def list_sessions() -> list:
+async def list_sessions(user: User = Depends(current_user)) -> list:
     """STUB: replaced by M7."""
     return []
 
 
 @router.get("/v1/sessions/{session_id}")
-async def get_session(session_id: str) -> Response:
+async def get_session(session_id: str, user: User = Depends(current_user)) -> Response:
     """STUB: replaced by M7."""
     raise HTTPException(status_code=404, detail="session not found")
 
 
 @router.get("/v1/diagrams/{diagram_id}/versions")
-async def list_diagram_versions(diagram_id: str) -> list:
+async def list_diagram_versions(
+    diagram_id: str, user: User = Depends(current_user)
+) -> list:
     """STUB: replaced by M7."""
     return []
 
@@ -115,7 +121,9 @@ class FeedbackAccepted(BaseModel):
 
 
 @router.post("/v1/feedback", status_code=202)
-async def submit_feedback(feedback: FeedbackRequest) -> FeedbackAccepted:
+async def submit_feedback(
+    feedback: FeedbackRequest, user: User = Depends(current_user)
+) -> FeedbackAccepted:
     """STUB: replaced by M9."""
     return FeedbackAccepted()
 
@@ -145,7 +153,9 @@ class PlantUMLRenderRequest(BaseModel):
 
 
 @router.post("/v1/render/plantuml")
-async def render_plantuml(request: PlantUMLRenderRequest) -> Response:
+async def render_plantuml(
+    request: PlantUMLRenderRequest, user: User = Depends(current_user)
+) -> Response:
     """Render PlantUML source to SVG. REAL — not a stub.
 
     Shells out to the PlantUML jar: stdin is the source, stdout is the SVG.
